@@ -163,6 +163,8 @@ struct Engine {
     std::array<std::atomic<double>, static_cast<size_t>(CalibrationIndex::count)> calibration;
     CalibrationValues built{};   // the values the board was prepared with
     CalibrationValues calApplied{}; // the values the board plays now
+    // Kick Tune glides to the knob in short steps (kGlideSamples) instead of jumping per message.
+    double kickNow = 0, kickTarget = 0;
     double sampleRate = 0;
     bool syncControls = true;
     std::array<std::atomic<float>, controlCount> values;
@@ -236,6 +238,28 @@ void control(External* x, t_symbol*, long count, t_atom* atoms) {
 
 double kickCap(double semitones) { return 15e-9 * std::exp2(-semitones / 12); }
 
+constexpr int kGlideSamples = 16;     // a C41/C42 update every 16 samples while gliding
+constexpr double kGlideSeconds = 0.02; // the glide's time constant
+
+// One glide step: C41 and C42 a little closer to the knob. True while still gliding.
+bool glideKick(Engine& engine, int samples) {
+    const double gap = engine.kickTarget - engine.kickNow;
+    if (std::abs(gap) < 1e-4) {
+        if (gap != 0) {
+            engine.kickNow = engine.kickTarget;
+            const double cap = kickCap(engine.kickNow);
+            engine.board->setLivePart(Voice::BD, "c41", cap);
+            engine.board->setLivePart(Voice::BD, "c42", cap);
+        }
+        return false;
+    }
+    engine.kickNow += gap * (1 - std::exp(-samples / (kGlideSeconds * engine.sampleRate)));
+    const double cap = kickCap(engine.kickNow);
+    engine.board->setLivePart(Voice::BD, "c41", cap);
+    engine.board->setLivePart(Voice::BD, "c42", cap);
+    return true;
+}
+
 // Audio thread: apply the calibration values that moved since the last block.
 void applyLiveCalibration(Engine& engine) {
     using C = CalibrationIndex;
@@ -271,11 +295,7 @@ void applyLiveCalibration(Engine& engine) {
         board.setLiveTriggerWidth(value(C::monoMs));
         engine.pulseSamples = std::max(1, static_cast<int>(std::ceil(engine.sampleRate * (value(C::monoMs) + 0.2) * 0.001)));
     }
-    if (moved(C::kickTune)) { // C41 and C42, the kick's resonator: retunes a ringing kick too
-        const double cap = kickCap(value(C::kickTune));
-        board.setLivePart(Voice::BD, "c41", cap);
-        board.setLivePart(Voice::BD, "c42", cap);
-    }
+    if (moved(C::kickTune)) engine.kickTarget = value(C::kickTune); // perform() glides C41/C42 there
     engine.calApplied = now;
 }
 
@@ -323,7 +343,11 @@ void perform(External* x, t_object*, double**, long, double** outs, long,
             engine.board->setLines(false, 0);
         }
         const auto available = frames - position;
-        const int block = static_cast<int>(engine.hold ? std::min<long>(available, engine.hold) : available);
+        int block = static_cast<int>(engine.hold ? std::min<long>(available, engine.hold) : available);
+        if (engine.kickNow != engine.kickTarget) {
+            block = std::min(block, kGlideSamples);
+            glideKick(engine, block);
+        }
         engine.board->render(engine.buffer.data() + position, block);
         position += block;
         if (engine.hold) engine.hold -= block;
@@ -367,6 +391,7 @@ void dsp64(External* x, t_object* chain, short*, double rate, long maxFrames, lo
         engine.board->prepare(rate);
         engine.sampleRate = rate;
         engine.calApplied = engine.built; // prepare() rebuilt the board from these: the next block re-applies the live values
+        engine.kickNow = engine.built[static_cast<size_t>(CalibrationIndex::kickTune)];
         const auto width = engine.board->calibration().monoMs;
         engine.pulseSamples = std::max(1, static_cast<int>(std::ceil(rate * (width + 0.2) * 0.001)));
         engine.syncControls = true;
@@ -415,4 +440,5 @@ extern "C" C74_EXPORT void ext_main(void*) {
     class_dspinit(cls);
     class_register(CLASS_BOX, cls);
     engineClass = cls;
+    post("ticco808cal~ engine r5 (Transistor 808): live calibration, Kick Tune glide");
 }

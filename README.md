@@ -74,3 +74,10 @@ fetches the version of the Max SDK used by the upstream bridge build.
 - Checked against full rebuilds: a live Kick Tune of -12/0/+12 gives the same
   25/50/99 Hz tail as a rebuilt board, and a hit after a live change matches a
   rebuilt board's within measurement noise.
+
+## Kick Tune glide (r5 engine)
+
+- Kick Tune no longer jumps to each knob message: C41/C42 glide to the
+  target in 16-sample steps with a 20 ms time constant.
+- On load the external posts its version to the Max console:
+  `ticco808cal~ engine r5 (Transistor 808)`.
