@@ -1,6 +1,15 @@
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX // the Max SDK pulls in windows.h: keep its min/max macros off std::min/std::max
+#endif
 #include "ext.h"
 #include "ext_obex.h"
 #include "z_dsp.h"
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 #include "tr808/core/voiceboard.h"
 #include "tr808/core/parallel.h"
 
@@ -14,7 +23,6 @@
 #include <thread>
 #include <vector>
 #if defined(_WIN32)
-#define NOMINMAX
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <mach/mach.h>
@@ -364,7 +372,7 @@ void dsp64(External* x, t_object* chain, short*, double rate, long maxFrames, lo
         engine.syncControls = true;
         engine.hold = 0;
         engine.pending.store(0, std::memory_order_relaxed);
-        object_method(chain, gensym("dsp_add64"), x, perform, 0, nullptr);
+        dsp_add64(chain, reinterpret_cast<t_object*>(x), reinterpret_cast<t_perfroutine64>(perform), 0, nullptr);
         engine.prepared.store(true, std::memory_order_relaxed);
     } catch (const std::exception& error) {
         object_error(reinterpret_cast<t_object*>(x), "Could not prepare voice board: %s", error.what());
