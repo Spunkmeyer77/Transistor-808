@@ -1,0 +1,60 @@
+name: Build Transistor 808 engine
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (universal arm64 + x86_64, macOS 12+)
+        run: bash build-macos.sh
+      - name: Verify architectures and minimum macOS
+        run: |
+          bin="build/macos/externals/ticco808cal~.mxo/Contents/MacOS/ticco808cal~"
+          lipo -info "$bin"
+          lipo -info "$bin" | grep -q arm64
+          lipo -info "$bin" | grep -q x86_64
+          otool -l "$bin" | grep -A4 LC_BUILD_VERSION | grep minos
+          otool -l "$bin" | grep -A4 LC_BUILD_VERSION | grep -q "minos 12.0"
+      - name: Zip
+        run: cd build/macos/externals && ditto -c -k --keepParent "ticco808cal~.mxo" ../../../ticco808cal-r4-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: ticco808cal-r4-macos.zip
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (x64)
+        shell: cmd
+        run: build-windows.bat
+      - name: Zip
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem -Recurse build/windows/externals -Filter *.mxe64 | Select-Object -First 1
+          Compress-Archive -Path $f.FullName -DestinationPath ticco808cal-r4-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: ticco808cal-r4-windows.zip
+  release:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish release r4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete r4 --yes --cleanup-tag 2>/dev/null || true
+          gh release create r4 --title "Transistor 808 engine r4" \
+            --notes "ticco808cal~ external r4: real-time calibration, multi-core rendering. Put both files next to Transistor-808-r4.amxd and freeze." \
+            ticco808cal-r4-macos.zip ticco808cal-r4-windows.zip device/Transistor-808-r4-Manual.pdf
